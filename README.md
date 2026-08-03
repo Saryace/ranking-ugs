@@ -56,6 +56,7 @@ ranking-ugs/
 ├── scripts/                  # un script por objetivo de datos
 ├── plots/                    # imágenes generadas por scripts (no versionado)
 ├── mapa_ugs.qmd               # mapa interactivo (Quarto/leaflet) de todas las capas
+├── docs/index.html            # copia publicada del mapa (GitHub Pages)
 └── ranking-ugs.Rproj
 ```
 
@@ -145,9 +146,30 @@ install.packages(c("leaflet", "leafem", "htmlwidgets", "tidyr", "DT", "base64enc
 quarto render mapa_ugs.qmd
 ```
 
-El resultado (`mapa_ugs.html`, ~25MB, no versionado) queda listo para abrir
+El resultado (`mapa_ugs.html`, ~28MB, no versionado) queda listo para abrir
 directamente en un navegador — no necesita servidor. Los rasters se
 reducen de resolución solo para este mapa (no afecta `data/processed/`),
 para que el HTML no pese cientos de MB. Si los caracteres acentuados salen
 cortados (p. ej. "Áreas" → "reas"), correr `export LANG=en_US.UTF-8` antes de
 `quarto render` — el proceso de R necesita un locale UTF-8.
+
+### Publicado en GitHub Pages
+
+**https://saryace.github.io/ranking-ugs/**
+
+Así cualquiera puede abrir el mapa desde un link, sin clonar el repositorio
+(que pesa ~283MB en Git LFS por los datos crudos — cada clone consume esa
+cuota). Publicado desde `docs/index.html`, que **sí** está versionado (a
+diferencia de `mapa_ugs.html` en la raíz). Después de cambiar
+`mapa_ugs.qmd` y volver a renderizar, hay que copiar el resultado y subirlo:
+
+```bash
+quarto render mapa_ugs.qmd
+cp mapa_ugs.html docs/index.html
+git add docs/index.html
+git commit -m "Actualiza mapa publicado"
+git push
+```
+
+GitHub Pages se sirve desde la rama `main`, carpeta `/docs` (configurado en
+Settings → Pages del repositorio).
