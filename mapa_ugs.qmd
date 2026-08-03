@@ -1,0 +1,436 @@
+---
+title: "ranking-ugs — Mapa de capas"
+subtitle: "Áreas verdes de la Región Metropolitana + capas de apoyo para el ranking"
+format:
+  html:
+    embed-resources: true
+    page-layout: full
+    toc: false
+    grid:
+      body-width: 1100px
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+#| include: false
+# Si los caracteres acentuados salen cortados en el HTML (p. ej. "Áreas" -> "reas"),
+# el proceso de R se está ejecutando en un locale no-UTF-8 (p. ej. "C"). Correr
+# `export LANG=en_US.UTF-8` (o equivalente) antes de `quarto render` en ese caso.
+library(sf)
+library(dplyr)
+library(terra)
+library(leaflet)
+library(leafem)
+library(DT)
+library(base64enc)
+
+crs_metrico <- 32719
+
+# Ícono SVG embebido como data URI: leaflet no tiene "forma" nativa para
+# addCircleMarkers (siempre son círculos), así que se arma un ícono propio
+# por combinación de forma+color para poder codificar dos variables a la vez
+# (p. ej. forma = cuartil de calidad, color = tipo de espacio público).
+icono_svg_uri <- function(forma, relleno, borde = "#222222") {
+  svg <- if (forma == "circulo") {
+    sprintf('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><circle cx="10" cy="10" r="7" fill="%s" stroke="%s" stroke-width="1.5"/></svg>', relleno, borde)
+  } else {
+    sprintf('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect x="3" y="3" width="14" height="14" fill="%s" stroke="%s" stroke-width="1.5"/></svg>', relleno, borde)
+  }
+  paste0("data:image/svg+xml;base64,", base64enc::base64encode(charToRaw(svg)))
+}
+
+# ---- Capa base: áreas verdes RM (MINVU) ------------------------------------
+# Se recorta a las columnas necesarias y se simplifica la geometría (3m de
+# tolerancia) para que el peso del documento no se multiplique por cada tab
+# (esta misma capa se agrega en cada uno).
+ugs <- st_read("data/processed/SHP/areas_verdes_rm.gpkg", quiet = TRUE) |>
+  select(id, TIPO_EP, CALIDAD, RANGO_CALI) |>
+  st_transform(crs_metrico) |>
+  st_simplify(dTolerance = 3, preserveTopology = TRUE) |>
+  st_transform(4326)
+
+# Mapa base: siempre agrega primero la capa de áreas verdes (UGS)
+base_map <- function() {
+  leaflet(options = leafletOptions(minZoom = 10)) |>
+    addProviderTiles(providers$CartoDB.Positron) |>
+    addPolygons(
+      data = ugs,
+      group = "Áreas verdes (MINVU)",
+      color = "#2ca25f", weight = 1, opacity = 0.8,
+      fillColor = "#2ca25f", fillOpacity = 0.35,
+      label = ~paste0(TIPO_EP, " — ", id,
+        ifelse(is.na(CALIDAD), "", paste0(" (calidad: ", round(CALIDAD), ")")))
+    )
+}
+
+# ---- Helpers para rasters livianos (downsample en un tempfile) -------------
+# Los rasters crudos son de 10-30m y pesan demasiado para incrustarlos tal
+# cual en un HTML autocontenido; se reducen para esta visualización de
+# ciudad completa (no afecta a los datos de data/processed/, solo a este mapa).
+downsample_categorico <- function(path, fact = 12) {
+  r <- aggregate(rast(path), fact = fact, fun = "modal")
+  tmp <- tempfile(fileext = ".tif")
+  writeRaster(r, tmp, datatype = "INT1U", overwrite = TRUE)
+  tmp
+}
+downsample_continuo <- function(path, fact = 4) {
+  r <- aggregate(rast(path), fact = fact, fun = "mean", na.rm = TRUE)
+  tmp <- tempfile(fileext = ".tif")
+  writeRaster(r, tmp, datatype = "FLT4S", overwrite = TRUE)
+  tmp
+}
+
+paleta_cuartil <- colorOptions(
+  palette = c("#2c7bb6", "#ffffbf", "#fdae61", "#d7191c"),
+  breaks = c(0.5, 1.5, 2.5, 3.5, 4.5)
+)
+```
+
+## Cómo leer este mapa
+
+Cada tab agrega, sobre la capa de **áreas verdes de la Región Metropolitana**
+(MINVU, siempre visible primero, en verde), una capa temática distinta:
+comparación de fuentes, cobertura pasto/bosque, temperatura por cuartil,
+buffer de 5 min de Metro, o NDVI. Usar el control de capas (arriba a la
+derecha de cada mapa) para prender/apagar capas.
+
+::: {.panel-tabset}
+
+## Comparación de fuentes
+
+Áreas verdes MINVU (verde) vs. áreas verdes "Públicas" de OCUC (naranjo) —
+ver [`data/processed/OCUC-MINVU/README.md`](data/processed/OCUC-MINVU/README.md).
+
+```{r}
+ocuc <- st_read("data/processed/OCUC-MINVU/comparacion_poligonos.gpkg",
+    layer = "ocuc_publicas_rm", quiet = TRUE) |>
+  select(comuna_norm, AREA_ha) |>
+  st_transform(crs_metrico) |>
+  st_simplify(dTolerance = 3, preserveTopology = TRUE) |>
+  st_transform(4326)
+
+base_map() |>
+  addPolygons(
+    data = ocuc, group = "OCUC \"Públicas\"",
+    color = "#d95f02", weight = 1, opacity = 0.8,
+    fillColor = "#d95f02", fillOpacity = 0.35,
+    label = ~paste0("OCUC — ", comuna_norm, " (", round(AREA_ha, 1), " ha)")
+  ) |>
+  addLayersControl(
+    overlayGroups = c("Áreas verdes (MINVU)", "OCUC \"Públicas\""),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+```
+
+## Grass / Wood (Dynamic World)
+
+Probabilidad de cobertura `woody` (trees + shrub_and_scrub) y `grass`, 30m —
+ver [`data/raw/dw-wood-grass/README.md`](data/raw/dw-wood-grass/README.md).
+
+```{r}
+woody_tmp <- downsample_continuo("data/raw/dw-wood-grass/dw_woody_stgo_30m.tif")
+grass_tmp <- downsample_continuo("data/raw/dw-wood-grass/dw_grass_stgo_30m.tif")
+
+base_map() |>
+  addGeotiff(
+    file = woody_tmp, group = "Woody (trees+shrub)", opacity = 0.7,
+    colorOptions = colorOptions(palette = c("#f7fcf5", "#00441b"), domain = c(0, 1))
+  ) |>
+  addGeotiff(
+    file = grass_tmp, group = "Grass", opacity = 0.7,
+    colorOptions = colorOptions(palette = c("#ffffe5", "#78c679"), domain = c(0, 1))
+  ) |>
+  addLayersControl(
+    overlayGroups = c("Áreas verdes (MINVU)", "Woody (trees+shrub)", "Grass"),
+    options = layersControlOptions(collapsed = FALSE)
+  ) |>
+  hideGroup("Grass")
+```
+
+## Temperatura Q1-Q4 (stgo-hot)
+
+Cuartiles de temperatura por período del día — ver
+[`data/processed/stgo-hot/README.md`](data/processed/stgo-hot/README.md). Q1 =
+más frío, Q4 = más caliente **dentro de cada período** (no comparable entre
+períodos).
+
+```{r}
+am_tmp <- downsample_categorico("data/processed/stgo-hot/santiago-chile_am_temp_c_quartil.tif")
+af_tmp <- downsample_categorico("data/processed/stgo-hot/santiago-chile_af_temp_c_quartil.tif")
+pm_tmp <- downsample_categorico("data/processed/stgo-hot/santiago-chile_pm_temp_c_quartil.tif")
+
+base_map() |>
+  addGeotiff(file = am_tmp, group = "Mañana (am)", opacity = 0.7, colorOptions = paleta_cuartil) |>
+  addGeotiff(file = af_tmp, group = "Tarde (af)", opacity = 0.7, colorOptions = paleta_cuartil) |>
+  addGeotiff(file = pm_tmp, group = "Noche (pm)", opacity = 0.7, colorOptions = paleta_cuartil) |>
+  addLayersControl(
+    overlayGroups = c("Áreas verdes (MINVU)", "Mañana (am)", "Tarde (af)", "Noche (pm)"),
+    options = layersControlOptions(collapsed = FALSE)
+  ) |>
+  hideGroup(c("Tarde (af)", "Noche (pm)"))
+```
+
+## 5 min Metro
+
+Buffer de 400m (~5 min caminando) alrededor de cada estación de Metro — ver
+[`data/processed/metro/README.md`](data/processed/metro/README.md). Es un
+buffer euclidiano recto, no una isócrona de red peatonal.
+
+```{r}
+buffer <- st_read("data/processed/metro/metro_buffer_5min.gpkg",
+    layer = "buffer_disuelto", quiet = TRUE) |>
+  st_transform(4326)
+estaciones <- st_read("data/processed/metro/metro_buffer_5min.gpkg",
+    layer = "estaciones", quiet = TRUE) |>
+  select(nombre, linea, estacion) |>
+  st_transform(4326)
+
+base_map() |>
+  addPolygons(
+    data = buffer, group = "Buffer 5 min (400m)",
+    color = "#3182bd", weight = 1, opacity = 0.8,
+    fillColor = "#3182bd", fillOpacity = 0.25
+  ) |>
+  addCircleMarkers(
+    data = estaciones, group = "Estaciones",
+    radius = 3, color = "#08519c", stroke = FALSE, fillOpacity = 0.9,
+    label = ~paste0(nombre, " (", linea, ", ", estacion, ")")
+  ) |>
+  addLayersControl(
+    overlayGroups = c("Áreas verdes (MINVU)", "Buffer 5 min (400m)", "Estaciones"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+```
+
+## NDVI
+
+NDVI de Santiago, enero 2024 (raster con CRS reparado) — ver
+[`data/processed/NDVI/README.md`](data/processed/NDVI/README.md).
+
+```{r}
+ndvi_tmp <- downsample_continuo("data/processed/NDVI/NDVI_Santiago_Jan2024_30m_repaired.tif")
+
+base_map() |>
+  addGeotiff(
+    file = ndvi_tmp, group = "NDVI", opacity = 0.7,
+    colorOptions = colorOptions(
+      palette = c("#ece7f2", "#a6bddb", "#2ca25f", "#006d2c"),
+      domain = c(0, 0.8)
+    )
+  ) |>
+  addLayersControl(
+    overlayGroups = c("Áreas verdes (MINVU)", "NDVI"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+```
+
+## Resumen: plazas vs. parques
+
+Descriptivos agregados a nivel de plaza/parque (Región Metropolitana) — ver
+[`scripts/10_indicadores_combinados_rm.R`](scripts/10_indicadores_combinados_rm.R)
+y [`data/processed/indicadores/README.md`](data/processed/indicadores/README.md).
+Calidad, NDVI, temperatura de tarde (AF) y cobertura woody/grass son
+promedios por polígono; correr ese script primero si `data/processed/indicadores/`
+no existe todavía.
+
+```{r}
+resumen <- read.csv("data/processed/indicadores/resumen_tipo_ep.csv")
+
+resumen |>
+  transmute(
+    `Tipo` = TIPO_EP,
+    `N° polígonos` = format(n, big.mark = "."),
+    `Área media (m²)` = format(round(area_m2_prom), big.mark = "."),
+    `Calidad media (0-100)` = round(calidad_prom, 1),
+    `NDVI medio` = round(ndvi_prom, 3),
+    `Temp. AF media (°C)` = round(temp_af_prom_c, 1),
+    `Woody medio` = round(woody_prom, 3),
+    `Grass medio` = round(grass_prom, 3)
+  ) |>
+  knitr::kable(align = "lrrrrrrr")
+```
+
+Cuartiles de calidad (Q1 = más baja, Q4 = más alta) por tipo — ver
+[`data/processed/SHP/README.md`](data/processed/SHP/README.md#cómo-se-procesan-estos-datos)
+para cómo se calculan:
+
+```{r}
+conteo <- read.csv("data/processed/indicadores/conteo_calidad_quartil.csv")
+
+conteo |>
+  mutate(calidad_q = ifelse(is.na(calidad_q) | calidad_q == "", "Sin encuesta", calidad_q)) |>
+  tidyr::pivot_wider(
+    names_from = calidad_q, values_from = n, values_fill = 0
+  ) |>
+  select(TIPO_EP, Q1, Q2, Q3, Q4, `Sin encuesta`) |>
+  rename(Tipo = TIPO_EP) |>
+  knitr::kable(align = "lrrrrr")
+```
+
+**Qué significa cada cuartil en la práctica** — valor promedio de calidad y
+de temperatura AF *dentro* de cada cuartil, por tipo (los cortes de cuartil
+son los mismos para PLAZA y PARQUE — ver
+[`data/processed/indicadores/README.md`](data/processed/indicadores/README.md)
+— pero el promedio real dentro de cada bloque puede variar levemente según
+qué polígonos de cada tipo caen ahí):
+
+```{r}
+ind_completo <- st_read("data/processed/indicadores/areas_verdes_rm_indicadores.gpkg", quiet = TRUE) |>
+  st_drop_geometry()
+
+ind_completo |>
+  filter(!is.na(calidad_q)) |>
+  group_by(TIPO_EP, calidad_q) |>
+  summarise(media = round(mean(CALIDAD, na.rm = TRUE), 1), .groups = "drop") |>
+  tidyr::pivot_wider(names_from = calidad_q, values_from = media) |>
+  rename(Tipo = TIPO_EP) |>
+  knitr::kable(align = "lrrrr", caption = "Calidad promedio (0-100) por cuartil y tipo")
+```
+
+```{r}
+ind_completo |>
+  filter(!is.na(temp_af_q)) |>
+  group_by(TIPO_EP, temp_af_q) |>
+  summarise(media = round(mean(temp_af_medio_c, na.rm = TRUE), 1), .groups = "drop") |>
+  tidyr::pivot_wider(names_from = temp_af_q, values_from = media) |>
+  rename(Tipo = TIPO_EP) |>
+  knitr::kable(align = "lrrrr", caption = "Temperatura AF promedio (°C) por cuartil y tipo")
+```
+
+## Muestra de terreno (Q1 vs. Q4)
+
+Muestra aleatoria estratificada de 144 sitios para una campaña de terreno
+(carbono en el suelo) — estratificada por `TIPO_EP` × **extremos** (Q1 y Q4,
+no los 4 cuartiles) de calidad y de temperatura AF, para maximizar el
+contraste entre esas variables. **No** es un "top N" por puntaje: un sitio
+puede rankear muy bien en el compuesto general (ver
+[`data/processed/indicadores/README.md`](data/processed/indicadores/README.md)
+para ese ranking completo, `ranking_final_rm.gpkg`) y aun así quedar fuera de
+esta muestra si su calidad o temperatura caen en el rango medio (Q2/Q3) en
+vez de en un extremo — le pasa, por ejemplo, al Parque Metropolitano de
+Santiago, que es #1 del ranking pero su temperatura siempre cae en Q3. Ver
+[`scripts/12_muestra_estratificada_carbono.R`](scripts/12_muestra_estratificada_carbono.R)
+para la metodología completa (diseño inspirado en Vasenev et al. 2014,
+*Geoderma*).
+
+**Asignación lograda de la muestra estratificada** (objetivo ~18 por celda —
+subida de 112 a 144 sitios para dejar respaldo por si hay problemas de
+acceso en terreno — capado por disponibilidad real: las celdas de parques
+Q4-calidad son muy chicas, solo 5-8 polígonos en toda la RM cumplen calidad
+alta *y* temperatura extrema, ver README para el detalle):
+
+```{r}
+asignacion <- read.csv("data/processed/indicadores/muestra_asignacion.csv")
+
+asignacion |>
+  transmute(
+    Tipo = TIPO_EP, `Cuartil calidad` = calidad_q, `Cuartil temp. AF` = temp_af_q,
+    `Disponibles` = n_disponible,
+    `Objetivo` = n_objetivo, `Logrado` = n_logrado,
+    `Cerca Metro` = n_cerca_metro, `% cerca Metro` = pct_cerca_metro
+  ) |>
+  knitr::kable(align = "lccrrrr")
+```
+
+**Mapa de la muestra** (144 sitios, color = tipo, forma = cuartil de
+calidad, superpuestos al cuartil de temperatura de tarde AF):
+
+```{r}
+muestra <- st_read("data/processed/indicadores/muestra_carbono_rm.gpkg", quiet = TRUE) |>
+  select(id, TIPO_EP, calidad_q, temp_af_q, temp_af_medio_c, cerca_metro_5min) |>
+  st_transform(crs_metrico) |>
+  st_centroid() |>
+  st_transform(4326)
+
+## colorFactor() ordena el dominio alfabéticamente sin importar el orden en
+## que se le pase — dominio ya alfabético (PARQUE, PLAZA) para que la
+## asignación de color sea explícita y predecible. Se evita el verde para no
+## confundir los puntos de la muestra con la capa base de áreas verdes.
+pal_tipo <- colorFactor(c("#d95f02", "#3182bd"), domain = c("PARQUE", "PLAZA"))
+colores_tipo <- c(PARQUE = "#d95f02", PLAZA = "#3182bd")
+
+muestra <- muestra |>
+  mutate(
+    forma = ifelse(calidad_q == "Q1", "circulo", "cuadrado"),
+    icono_uri = mapply(icono_svg_uri, forma, colores_tipo[TIPO_EP])
+  )
+iconos_muestra <- icons(iconUrl = muestra$icono_uri, iconWidth = 18, iconHeight = 18)
+
+temp_af_q_tmp <- downsample_categorico("data/processed/stgo-hot/santiago-chile_af_temp_c_quartil.tif")
+paleta_temp_af_q <- colorFactor(
+  c("#2c7bb6", "#ffffbf", "#fdae61", "#d7191c"),
+  domain = c("Q1", "Q2", "Q3", "Q4")
+)
+
+base_map() |>
+  addGeotiff(
+    file = temp_af_q_tmp, group = "Cuartil temp. AF", opacity = 0.6,
+    colorOptions = paleta_cuartil
+  ) |>
+  addMarkers(
+    data = muestra, group = "Muestra (144 sitios)", icon = iconos_muestra,
+    label = ~paste0(TIPO_EP, " — ", id, " (calidad ", calidad_q, ", temp ",
+      temp_af_q, " = ", round(temp_af_medio_c, 1), "°C",
+      ifelse(cerca_metro_5min, ", cerca Metro", ""), ")")
+  ) |>
+  addLegend(
+    position = "bottomright", pal = pal_tipo, values = muestra$TIPO_EP,
+    title = "Color = Tipo"
+  ) |>
+  addControl(
+    html = "<div style='background:white;padding:6px 10px;border-radius:4px;
+      font-size:12px;line-height:1.5;box-shadow:0 1px 4px rgba(0,0,0,.3)'>
+      <b>Forma = Cuartil calidad</b><br>&#9679; Q1 (baja)&nbsp;&nbsp;&#9632; Q4 (alta)</div>",
+    position = "bottomright"
+  ) |>
+  addLegend(
+    position = "bottomleft", pal = paleta_temp_af_q, values = c("Q1", "Q2", "Q3", "Q4"),
+    title = "Cuartil temp. AF"
+  ) |>
+  addLayersControl(
+    overlayGroups = c("Áreas verdes (MINVU)", "Cuartil temp. AF", "Muestra (144 sitios)"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+```
+
+## Muestra completa (144 sitios)
+
+Los 144 sitios seleccionados, con los niveles de estratificación usados
+(`Tipo`, `Cuartil calidad`, `Cuartil temp. AF`, `Cerca Metro`) y los
+indicadores de apoyo. Tabla ordenable/buscable — columnas por las que se
+estratificó están resaltadas al inicio.
+
+```{r}
+muestra_tabla <- st_read("data/processed/indicadores/muestra_carbono_rm.gpkg", quiet = TRUE) |>
+  st_drop_geometry() |>
+  arrange(TIPO_EP, calidad_q, temp_af_q, desc(cerca_metro_5min)) |>
+  transmute(
+    id, `Tipo` = TIPO_EP, `Cuartil calidad` = calidad_q,
+    `Cuartil temp. AF` = temp_af_q,
+    `Cerca Metro` = ifelse(cerca_metro_5min, "Sí", "No"),
+    `ID MINVU` = ID_MINVU_Calidad,
+    `Área (m²)` = round(area_m2),
+    `Calidad` = round(CALIDAD, 1),
+    `Temp. AF (°C)` = round(temp_af_medio_c, 1),
+    NDVI = round(ndvi_medio, 3),
+    Woody = round(woody_medio, 3),
+    Grass = round(grass_medio, 3),
+    `Puntaje ranking` = round(ranking_score, 3),
+    `Posición ranking` = ranking_pos
+  )
+
+datatable(
+  muestra_tabla,
+  rownames = FALSE,
+  filter = "top",
+  options = list(
+    pageLength = 25, scrollX = TRUE,
+    order = list(list(1, "asc"), list(2, "asc"), list(3, "asc"), list(4, "desc"))
+  )
+)
+```
+
+:::

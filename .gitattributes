@@ -1,0 +1,2 @@
+data/raw/SHP/CALIDAD_pzpq_2019_G1G2.dbf filter=lfs diff=lfs merge=lfs -text
+data/raw/OCUC-MINVU/*.geojson filter=lfs diff=lfs merge=lfs -text
