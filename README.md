@@ -46,13 +46,14 @@ ranking-ugs/
 │   │   ├── NDVI/              # GEE Landsat — NDVI Santiago, enero 2024 (30m, CRS mal etiquetado)
 │   │   └── metro/              # IDE OCUC — estaciones de Metro de Santiago (actuales/proyectadas)
 │   └── processed/            # salidas generadas por scripts/ (no versionadas, salvo README.md)
-│       ├── SHP/
-│       ├── OCUC-MINVU/
-│       ├── stgo-hot/
-│       ├── NDVI/               # NDVI con CRS reparado
-│       ├── dw-wood-grass/      # woody/grass empaquetados en un .gpkg
-│       ├── metro/              # buffer de 5 min caminando por estación
-│       └── indicadores/        # calidad+cuartil, NDVI, temp. AF, woody/grass, área — por polígono
+│   │   ├── SHP/
+│   │   ├── OCUC-MINVU/
+│   │   ├── stgo-hot/
+│   │   ├── NDVI/               # NDVI con CRS reparado
+│   │   ├── dw-wood-grass/      # woody/grass empaquetados en un .gpkg
+│   │   ├── metro/              # buffer de 5 min caminando por estación
+│   │   └── indicadores/        # calidad+cuartil, NDVI, temp. AF, woody/grass, área — por polígono
+│   └── analisis-ranking-extra  # análisis paralelo con promedios zonales (QGIS)  
 ├── scripts/                  # un script por objetivo de datos
 ├── plots/                    # imágenes generadas por scripts (no versionado)
 ├── mapa_ugs.qmd               # mapa interactivo (Quarto/leaflet) de todas las capas
