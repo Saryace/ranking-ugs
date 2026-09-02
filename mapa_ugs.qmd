@@ -29,6 +29,29 @@ library(base64enc)
 
 crs_metrico <- 32719
 
+# ---- Basemap CARTO (Positron) --------------------------------------------
+# CARTO cerró los raster basemaps anónimos: sin API key las teselas salen con
+# la marca de agua "API KEY REQUIRED". La key (gratis, https://carto.com/basemaps/apikey)
+# se guarda en ~/.Renviron como CARTO_KEY y se pasa como ?key= en la URL.
+# `addProviderTiles(providers$CartoDB.Positron)` no permite inyectar la key,
+# así que se arma la URL a mano con addTiles().
+carto_key <- Sys.getenv("CARTO_KEY")
+if (!nzchar(carto_key)) {
+  stop("Falta CARTO_KEY en el entorno de R. Correr usethis::edit_r_environ(), ",
+       "agregar CARTO_KEY=\"...\" y reiniciar R antes de renderizar.")
+}
+carto_url <- sprintf(
+  "https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=%s", carto_key
+)
+carto_attr <- paste(
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  '&copy; <a href="https://carto.com/attributions">CARTO</a>'
+)
+add_carto_basemap <- function(map) {
+  addTiles(map, urlTemplate = carto_url, attribution = carto_attr,
+           options = tileOptions(maxZoom = 20, detectRetina = TRUE))
+}
+
 # Ícono SVG embebido como data URI: leaflet no tiene "forma" nativa para
 # addCircleMarkers (siempre son círculos), así que se arma un ícono propio
 # por combinación de forma+color para poder codificar dos variables a la vez
@@ -55,7 +78,7 @@ ugs <- st_read("data/processed/SHP/areas_verdes_rm.gpkg", quiet = TRUE) |>
 # Mapa base: siempre agrega primero la capa de áreas verdes (UGS)
 base_map <- function() {
   leaflet(options = leafletOptions(minZoom = 10)) |>
-    addProviderTiles(providers$CartoDB.Positron) |>
+    add_carto_basemap() |>
     addPolygons(
       data = ugs,
       group = "Áreas verdes (MINVU)",
