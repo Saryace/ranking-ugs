@@ -57,9 +57,12 @@ más bajo de los parques pese a tener más vegetación.
 ## `ranking_final_rm.gpkg`
 
 Generado por [`scripts/11_ranking_final_rm.R`](../../../scripts/11_ranking_final_rm.R).
-**7.307** de los 10.243 polígonos (los que tienen los 5 indicadores completos
-— calidad, NDVI, temp. AF, woody, grass; se excluyen los 2.936 sin encuesta
-de calidad o fuera de la cobertura de algún raster), con dos columnas nuevas:
+**4.614** de los 10.243 polígonos: los que tienen los 5 indicadores completos
+— calidad, NDVI, temp. AF, woody, grass — (se excluyen los 2.936 sin encuesta
+de calidad o fuera de la cobertura de algún raster) **y** área > 1.000 m²
+(se excluyen 2.693 polígonos adicionales — plazas/bandejones pequeños que sí
+tenían los 5 indicadores pero cuya área queda por debajo del umbral), con dos
+columnas nuevas:
 
 | Variable | Descripción |
 |---|---|
@@ -86,10 +89,12 @@ muestra de suelo donde no hay superficie abierta).
 
 **Diseño — "grupos extremos" (Q1 vs. Q4), no los 4 cuartiles:**
 
-1. **Marco muestral:** solo polígonos con encuesta de calidad, con algo de
-   superficie abierta/vegetada (`woody_medio + grass_medio > 0,05` — condición
-   mínima para poder tomar una muestra de suelo en terreno), **y** en el
-   cuartil más bajo o más alto de calidad y de temperatura (1.774 candidatos).
+1. **Marco muestral:** parte de `ranking_final_rm.gpkg` (ya restringido a
+   área > 1.000 m²), y de ahí solo polígonos con encuesta de calidad, con
+   algo de superficie abierta/vegetada (`woody_medio + grass_medio > 0,05` —
+   condición mínima para poder tomar una muestra de suelo en terreno), **y**
+   en el cuartil más bajo o más alto de calidad y de temperatura (1.145
+   candidatos).
 2. **Estratos:** `TIPO_EP` (PLAZA/PARQUE) × `calidad_q` (solo Q1 y Q4) ×
    `temp_af_q` (solo Q1 y Q4) = 8 celdas. Se toman deliberadamente los
    **extremos** de calidad y temperatura, no los 4 cuartiles, para maximizar
@@ -118,24 +123,24 @@ crecieron).
 
 | TIPO_EP | Calidad | Temp. AF | Disponibles | Objetivo | Logrado | % cerca Metro |
 |---|---|---|---|---|---|---|
-| PARQUE | Q1 (baja) | Q1 (fría) | 36 | 22 | 22 | 0,0% |
-| PARQUE | Q1 (baja) | Q4 (cálida) | 114 | 22 | 22 | 54,5% |
+| PARQUE | Q1 (baja) | Q1 (fría) | 34 | 22 | 22 | 0,0% |
+| PARQUE | Q1 (baja) | Q4 (cálida) | 98 | 22 | 22 | 54,5% |
 | PARQUE | Q4 (alta) | Q1 (fría) | 8 | 8 | 8 | 12,5% |
 | PARQUE | Q4 (alta) | Q4 (cálida) | 5 | 5 | 5 | 20,0% |
-| PLAZA | Q1 (baja) | Q1 (fría) | 250 | 22 | 22 | 22,7% |
-| PLAZA | Q1 (baja) | Q4 (cálida) | 575 | 22 | 22 | 72,7% |
-| PLAZA | Q4 (alta) | Q1 (fría) | 457 | 22 | 22 | 40,9% |
-| PLAZA | Q4 (alta) | Q4 (cálida) | 329 | 21 | 21 | 71,4% |
+| PLAZA | Q1 (baja) | Q1 (fría) | 98 | 22 | 22 | 4,5% |
+| PLAZA | Q1 (baja) | Q4 (cálida) | 298 | 22 | 22 | 72,7% |
+| PLAZA | Q4 (alta) | Q1 (fría) | 356 | 22 | 22 | 36,4% |
+| PLAZA | Q4 (alta) | Q4 (cálida) | 248 | 21 | 21 | 71,4% |
 
-**59 de 144 (41,0%) quedaron a 5 min de Metro** — algo más bajo que con 112
+**54 de 144 (37,5%) quedaron a 5 min de Metro** — algo más bajo que con 112
 sitios (46,4%), porque los 32 sitios extra se sacaron de celdas donde el
 subconjunto cerca de Metro ya estaba parcialmente agotado (p. ej. PARQUE
 Q1-calidad×Q4-temp bajó de 70,6% a 54,5% al pasar de 17 a 22 sitios en esa
 celda). Al exigir *también* el extremo de temperatura, las celdas de PARQUE
-quedan tan chicas (5-114 candidatos) que a veces casi no hay superposición
+quedan tan chicas (5-98 candidatos) que a veces casi no hay superposición
 con cercanía a Metro — la celda PARQUE Q1-calidad×Q1-temp (parques fríos y de
 baja calidad, probablemente periféricos) tiene **0** candidatos cerca de
-Metro entre sus 36 disponibles, con o sin respaldo. Esto es una limitación
+Metro entre sus 34 disponibles, con o sin respaldo. Esto es una limitación
 real del diseño de grupos extremos combinado con la prioridad a Metro, no un
 error: hay un trade-off entre maximizar el contraste de calidad/temperatura,
 el tamaño de muestra, y la cobertura de Metro.

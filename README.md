@@ -23,7 +23,7 @@ Cada objetivo de datos de la tabla de abajo corresponde a una de estas
 variables. [`data/processed/indicadores`](data/processed/indicadores/README.md)
 las junta a nivel de plaza/parque individual (calidad + su cuartil, NDVI,
 temperatura AF + su cuartil, woody/grass, área), calcula un **ranking
-compuesto** de las 7.307 plazas/parques con datos completos
+compuesto** de las 4.614 plazas/parques con datos completos y área > 1.000 m²
 (`ranking_final_rm.gpkg`), y saca de ahí una **muestra aleatoria
 estratificada de 144 sitios** (`muestra_carbono_rm.gpkg`, con respaldo por si
 hay problemas de muestreo en terreno) para una campaña de

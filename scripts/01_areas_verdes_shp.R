@@ -41,8 +41,7 @@ pzpq_con_encuesta <- pzpq_con_encuesta %>%
 
 pzpq_sin_encuesta <- pzpq_sin_encuesta %>%
   mutate(
-    en_88_centros_urbanos = FALSE,
-    !!!setNames(rep(list(NA_real_), length(campos_calidad)), campos_calidad),
+    en_88_centros_urbanos = FALSE,!!!setNames(rep(list(NA_real_), length(campos_calidad)), campos_calidad),
     RANGO_CALI = NA_character_
   )
 
@@ -52,10 +51,8 @@ pzpq_con_encuesta <- pzpq_con_encuesta %>%
 
 campos_comunes <- intersect(names(pzpq_sin_encuesta), names(pzpq_con_encuesta))
 
-poligonos_av <- bind_rows(
-  pzpq_sin_encuesta %>% select(all_of(campos_comunes)),
-  pzpq_con_encuesta %>% select(all_of(campos_comunes))
-) %>%
+poligonos_av <- bind_rows(pzpq_sin_encuesta %>% select(all_of(campos_comunes)),
+                          pzpq_con_encuesta %>% select(all_of(campos_comunes))) %>%
   # tiene_encuesta_calidad distingue el polígono realmente encuestado
   # (CALIDAD no nula) de los que solo pertenecen a los 88 centros urbanos
   # seleccionados pero quedaron "SIN INFORMACIÓN"
@@ -63,23 +60,51 @@ poligonos_av <- bind_rows(
 
 # --- 4. Guardar salidas ---------------------------------------------------
 
-st_write(poligonos_av, file.path(dir_out, "areas_verdes_poligonos.gpkg"),
-  delete_dsn = TRUE, quiet = TRUE)
+st_write(
+  poligonos_av,
+  file.path(dir_out, "areas_verdes_poligonos.gpkg"),
+  delete_dsn = TRUE,
+  quiet = TRUE
+)
 
-st_write(centros_urbanos, file.path(dir_out, "areas_verdes_centros_urbanos.gpkg"),
-  delete_dsn = TRUE, quiet = TRUE)
+st_write(
+  centros_urbanos,
+  file.path(dir_out, "areas_verdes_centros_urbanos.gpkg"),
+  delete_dsn = TRUE,
+  quiet = TRUE
+)
 
 poligonos_av %>%
   st_drop_geometry() %>%
   filter(tiene_encuesta_calidad) %>%
-  select(CUT, REGION, COMUNA, COD_URBANO, URBANO_CEN, TIPO_EP, NOMBRE_EP,
-    all_of(campos_calidad), RANGO_CALI) %>%
-  write.csv(file.path(dir_out, "areas_verdes_indicadores.csv"), row.names = FALSE)
+  select(
+    CUT,
+    REGION,
+    COMUNA,
+    COD_URBANO,
+    URBANO_CEN,
+    TIPO_EP,
+    NOMBRE_EP,
+    all_of(campos_calidad),
+    RANGO_CALI
+  ) %>%
+  write.csv(file.path(dir_out, "areas_verdes_indicadores.csv"),
+            row.names = FALSE)
 
 cat(
-  "Polígonos totales:", nrow(poligonos_av), "\n",
-  "En los 88 centros urbanos seleccionados:", sum(poligonos_av$en_88_centros_urbanos), "\n",
-  "Efectivamente encuestados (CALIDAD no nula):", sum(poligonos_av$tiene_encuesta_calidad), "\n",
-  "Centros urbanos:", nrow(centros_urbanos), "\n",
-  "Salidas escritas en:", dir_out, "\n"
+  "Polígonos totales:",
+  nrow(poligonos_av),
+  "\n",
+  "En los 88 centros urbanos seleccionados:",
+  sum(poligonos_av$en_88_centros_urbanos),
+  "\n",
+  "Efectivamente encuestados (CALIDAD no nula):",
+  sum(poligonos_av$tiene_encuesta_calidad),
+  "\n",
+  "Centros urbanos:",
+  nrow(centros_urbanos),
+  "\n",
+  "Salidas escritas en:",
+  dir_out,
+  "\n"
 )

@@ -6,10 +6,13 @@
 #
 # Se excluyen del ranking los polígonos sin encuesta de calidad (2.464 de
 # 10.243): no tiene sentido puntuarlos junto a los que sí tienen los 5
-# indicadores completos. La cercanía a Metro (5 min) se deja como columna
-# informativa, no se pondera en el puntaje — es un criterio de conveniencia
-# para el muestreo (ver 12_muestra_estratificada_carbono.R), no un atributo
-# de "calidad" del espacio público en sí.
+# indicadores completos. También se excluyen los polígonos de área <= 1000 m2
+# (micro-plazas/bandejones, a menudo residuales de trazado vial más que
+# espacio público real) — no entran al ranking ni a sus descriptivos. La
+# cercanía a Metro (5 min) se deja como columna informativa, no se pondera en
+# el puntaje — es un criterio de conveniencia para el muestreo (ver
+# 12_muestra_estratificada_carbono.R), no un atributo de "calidad" del
+# espacio público en sí.
 #
 # Metodología del puntaje: cada indicador se normaliza min-max a [0,1]
 # (orientado para que 1 = mejor) y se promedian con igual ponderación. Es una
@@ -29,10 +32,11 @@ areas <- st_read(file.path(dir_out, "areas_verdes_rm_indicadores.gpkg"), quiet =
 buffer_metro <- st_read(file.path("data", "processed", "metro", "metro_buffer_5min.gpkg"),
   layer = "buffer_disuelto", quiet = TRUE)
 
-# --- 1. Restringir a polígonos con los 5 indicadores completos -------------
+# --- 1. Restringir a polígonos con los 5 indicadores completos y area > 1000 m2 ---
 ranking <- areas %>%
   filter(!is.na(CALIDAD), !is.na(ndvi_medio), !is.na(temp_af_medio_c),
-    !is.na(woody_medio), !is.na(grass_medio), !is.na(area_m2))
+    !is.na(woody_medio), !is.na(grass_medio), !is.na(area_m2),
+    area_m2 > 1000)
 
 # --- 2. Cercanía a Metro (informativa) --------------------------------------
 ranking_32719 <- st_transform(ranking, st_crs(buffer_metro))
@@ -63,8 +67,11 @@ ranking <- ranking %>%
 st_write(ranking, file.path(dir_out, "ranking_final_rm.gpkg"), delete_dsn = TRUE, quiet = TRUE)
 
 cat(
-  "Polígonos en el ranking (con los 5 indicadores completos):", nrow(ranking), "\n",
+  "Polígonos en el ranking (5 indicadores completos y area > 1000 m2):", nrow(ranking), "\n",
   "de", nrow(areas), "polígonos totales en la RM\n",
+  "Excluidos por area <= 1000 m2 (entre los que sí tenían los 5 indicadores):",
+  sum(with(areas, !is.na(CALIDAD) & !is.na(ndvi_medio) & !is.na(temp_af_medio_c) &
+    !is.na(woody_medio) & !is.na(grass_medio) & !is.na(area_m2) & area_m2 <= 1000)), "\n",
   "Cerca de Metro (5 min):", sum(ranking$cerca_metro_5min),
   sprintf("(%.1f%%)\n", 100 * mean(ranking$cerca_metro_5min)),
   "Top 5:\n"
