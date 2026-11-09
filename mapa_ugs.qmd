@@ -399,6 +399,58 @@ leaflet(options = leafletOptions(minZoom = 10)) |>
   ")
 ```
 
+## Steinfort 2020
+
+Propiedades químicas de suelo en 33 plazas y parques de la Región
+Metropolitana, de Steinfort et al. (2020). Haz clic en un punto para ver
+todos sus valores. El color del punto indica el contenido de **materia
+orgánica (OM, %)**. Ver
+[`data/raw/steinfort2020/README.md`](data/raw/steinfort2020/README.md).
+
+> Steinfort, U., Contreras, A., Albornoz, F., Reyes-Paecke, S. & Guilleminot, P.
+> (2020). Vegetation survival and condition in public green spaces after their
+> establishment: Evidence from a semi-arid metropolis. *International Journal
+> of Agriculture and Natural Resources*, 47(2).
+> [doi:10.7764/ijanr.v47i2.2045](http://dx.doi.org/10.7764/ijanr.v47i2.2045) ·
+> [SciELO](https://www.scielo.cl/article_plus.php?pid=S2452-57312020000200090&tlng=en&lng=es)
+
+```{r}
+# Sin base_map(): la capa de polígonos de áreas verdes pesa ~3 MB por tab y
+# con ella el deploy de GitHub Pages falla (ver tab "Consultar dirección").
+steinfort <- read.csv("data/raw/steinfort2020/steinfort2020.csv", encoding = "UTF-8")
+
+pal_om <- colorNumeric(c("#fff7bc", "#fec44f", "#d95f0e", "#662506"),
+                       domain = steinfort$OM)
+
+fila_popup <- function(etq, val, unidad = "") {
+  sprintf("<tr><td style='padding-right:10px'>%s</td><td style='text-align:right'><b>%s</b> %s</td></tr>",
+          etq, val, unidad)
+}
+steinfort$popup <- with(steinfort, paste0(
+  "<b>", htmltools::htmlEscape(nombre_plaza), "</b>",
+  "<table style='margin-top:4px;font-size:12px'>",
+  fila_popup("pH", pH),
+  fila_popup("CE", EC, "mS cm⁻¹"),
+  fila_popup("Materia orgánica", OM, "%"),
+  fila_popup("N", N, "mg kg⁻¹"),
+  fila_popup("P", P, "mg kg⁻¹"),
+  fila_popup("K", K, "mg kg⁻¹"),
+  "</table><span style='font-size:11px;color:#666'>Steinfort et al. (2020)</span>"
+))
+
+leaflet(steinfort, options = leafletOptions(minZoom = 10)) |>
+  add_carto_basemap() |>
+  addCircleMarkers(
+    lng = ~lon, lat = ~lat, group = "Steinfort 2020 (suelo)",
+    radius = 8, color = "#333", weight = 1, opacity = 1,
+    fillColor = ~pal_om(OM), fillOpacity = 0.9,
+    label = ~paste0(nombre_plaza, " — OM ", OM, "%"),
+    popup = ~popup
+  ) |>
+  addLegend(position = "bottomright", pal = pal_om, values = ~OM,
+            title = "Materia orgánica (%)", opacity = 0.9)
+```
+
 ## 5 min Metro
 
 Buffer de 400m (~5 min caminando) alrededor de cada estación de Metro — ver
