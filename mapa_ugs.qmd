@@ -371,7 +371,11 @@ htmltools::tags$script(htmltools::HTML(paste0(
 ```
 
 ```{r}
-base_map() |>
+# Sin la capa de polígonos de áreas verdes (base_map()): duplicarla en este tab
+# subía el HTML ~3 MB y el deploy de GitHub Pages empezó a fallar.
+leaflet(options = leafletOptions(minZoom = 10)) |>
+  add_carto_basemap() |>
+  setView(lng = -70.65, lat = -33.45, zoom = 11) |>
   addGeotiff(file = af_tmp, group = "Cuartil temp. tarde (AF)", opacity = 0.5,
              colorOptions = paleta_cuartil) |>
   addLegend(
@@ -381,7 +385,7 @@ base_map() |>
     title = "Cuartil temp."
   ) |>
   addLayersControl(
-    overlayGroups = c("Áreas verdes (MINVU)", "Cuartil temp. tarde (AF)"),
+    overlayGroups = c("Cuartil temp. tarde (AF)"),
     options = layersControlOptions(collapsed = FALSE)
   ) |>
   htmlwidgets::onRender("
