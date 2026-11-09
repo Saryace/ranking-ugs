@@ -196,6 +196,205 @@ base_map() |>
   hideGroup(c("Tarde (af)", "Noche (pm)"))
 ```
 
+## Consultar dirección
+
+Escribe una dirección de Santiago (o haz clic en el mapa) para ver en qué
+**cuartil de temperatura** (Q1 = más frío … Q4 = más caliente) cae ese punto,
+en cada período del día — mismos rasters que el tab *Temperatura Q1-Q4*, ver
+[`data/processed/stgo-hot/README.md`](data/processed/stgo-hot/README.md). La
+consulta usa el raster agregado a 30 m (cuartil modal de 3×3 píxeles de
+10 m); la dirección se geocodifica con
+[Nominatim / OpenStreetMap](https://nominatim.org/).
+
+```{r}
+# ---- Grilla de cuartiles para consulta en el navegador ---------------------
+# Se agregan los 3 rasters de cuartil a 30m (modal) y se empaquetan en un solo
+# byte por celda: am + 5*af + 25*pm (0 = sin dato). El vector se comprime con
+# zlib (memCompress "gzip" de R = formato zlib, que el navegador abre con
+# DecompressionStream("deflate")) y se incrusta como base64.
+q_fact <- 3
+q_paths <- sprintf("data/processed/stgo-hot/santiago-chile_%s_temp_c_quartil.tif",
+                   c("am", "af", "pm"))
+q_rasts <- lapply(q_paths, \(p) aggregate(rast(p), fact = q_fact, fun = "modal", na.rm = TRUE))
+q_vals <- lapply(q_rasts, \(r) { v <- values(r, mat = FALSE); v[is.na(v)] <- 0L; as.integer(v) })
+q_code <- q_vals[[1]] + 5L * q_vals[[2]] + 25L * q_vals[[3]]
+q_ext <- ext(q_rasts[[1]])
+
+cortes <- read.csv("data/processed/stgo-hot/quartiles_cortes.csv")
+cortes$periodo <- sub("santiago-chile_(.*)_temp_c", "\\1", cortes$raster)
+cortes_list <- lapply(split(cortes, cortes$periodo), \(d)
+  round(unlist(d[, c("min_c", "q25_c", "mediana_c", "q75_c", "max_c")]), 1) |> unname())
+
+q_meta <- list(
+  xmin = q_ext$xmin[[1]], ymax = q_ext$ymax[[1]], res = res(q_rasts[[1]])[1],
+  ncol = ncol(q_rasts[[1]]), nrow = nrow(q_rasts[[1]]), zone = 19,
+  cortes = cortes_list,
+  data = base64enc::base64encode(memCompress(as.raw(q_code), type = "gzip"))
+)
+
+htmltools::tags$script(htmltools::HTML(paste0(
+  "window.UGS_TEMP_Q = ", jsonlite::toJSON(q_meta, auto_unbox = TRUE, digits = NA), ";"
+)))
+```
+
+```{=html}
+<style>
+#ugs-lookup-form { display:flex; gap:8px; flex-wrap:wrap; margin:0.5em 0 0.75em; }
+#ugs-lookup-input { flex:1 1 320px; padding:6px 10px; font-size:15px; border:1px solid #bbb; border-radius:4px; }
+#ugs-lookup-form button { padding:6px 16px; font-size:15px; border:0; border-radius:4px; background:#2c7bb6; color:#fff; cursor:pointer; }
+#ugs-lookup-form button:disabled { opacity:.6; cursor:wait; }
+#ugs-lookup-result { min-height:1.5em; margin-bottom:0.75em; font-size:14px; }
+.ugs-q-row { display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; }
+.ugs-q-card { border:1px solid #ddd; border-radius:6px; padding:6px 12px; min-width:150px; }
+.ugs-q-card.principal { border:2px solid #333; }
+.ugs-q-badge { display:inline-block; font-weight:700; font-size:18px; padding:1px 10px; border-radius:4px; margin-right:6px; border:1px solid rgba(0,0,0,.25); }
+.ugs-q-sub { color:#555; font-size:12px; }
+</style>
+<form id="ugs-lookup-form" autocomplete="off">
+  <input id="ugs-lookup-input" type="text" placeholder="Ej.: Av. Libertador Bernardo O'Higgins 340, Santiago" aria-label="Dirección en Santiago">
+  <button type="submit">Buscar</button>
+</form>
+<div id="ugs-lookup-result" aria-live="polite"></div>
+<script>
+(function () {
+  var COLORES = { 1: "#2c7bb6", 2: "#ffffbf", 3: "#fdae61", 4: "#d7191c" };
+  var TEXTO   = { 1: "#fff",    2: "#222",    3: "#222",    4: "#fff" };
+  var PERIODOS = [
+    { k: "af", nombre: "Tarde (AF)", principal: true },
+    { k: "am", nombre: "Mañana (AM)" },
+    { k: "pm", nombre: "Noche (PM)" }
+  ];
+  var grilla = null, marcador = null;
+
+  function esc(s) { var d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+  async function cargarGrilla() {
+    if (grilla) return grilla;
+    var D = window.UGS_TEMP_Q;
+    var bin = Uint8Array.from(atob(D.data), function (c) { return c.charCodeAt(0); });
+    var stream = new Blob([bin]).stream().pipeThrough(new DecompressionStream("deflate"));
+    grilla = new Uint8Array(await new Response(stream).arrayBuffer());
+    return grilla;
+  }
+
+  // Lat/lon WGS84 -> UTM (hemisferio sur), fórmulas de Snyder (1987).
+  function aUTM(lat, lon, zona) {
+    var a = 6378137, f = 1 / 298.257223563, k0 = 0.9996;
+    var e2 = f * (2 - f), ep2 = e2 / (1 - e2);
+    var phi = lat * Math.PI / 180, lam = lon * Math.PI / 180;
+    var lam0 = (zona * 6 - 183) * Math.PI / 180;
+    var s = Math.sin(phi), c = Math.cos(phi), t = Math.tan(phi);
+    var N = a / Math.sqrt(1 - e2 * s * s), T = t * t, C = ep2 * c * c, A = c * (lam - lam0);
+    var M = a * ((1 - e2 / 4 - 3 * e2 * e2 / 64 - 5 * e2 * e2 * e2 / 256) * phi
+      - (3 * e2 / 8 + 3 * e2 * e2 / 32 + 45 * e2 * e2 * e2 / 1024) * Math.sin(2 * phi)
+      + (15 * e2 * e2 / 256 + 45 * e2 * e2 * e2 / 1024) * Math.sin(4 * phi)
+      - (35 * e2 * e2 * e2 / 3072) * Math.sin(6 * phi));
+    var x = k0 * N * (A + (1 - T + C) * Math.pow(A, 3) / 6
+      + (5 - 18 * T + T * T + 72 * C - 58 * ep2) * Math.pow(A, 5) / 120) + 500000;
+    var y = k0 * (M + N * t * (A * A / 2 + (5 - T + 9 * C + 4 * C * C) * Math.pow(A, 4) / 24
+      + (61 - 58 * T + T * T + 600 * C - 330 * ep2) * Math.pow(A, 6) / 720));
+    if (lat < 0) y += 10000000;
+    return [x, y];
+  }
+
+  async function cuartiles(lat, lon) {
+    var D = window.UGS_TEMP_Q, g = await cargarGrilla();
+    var xy = aUTM(lat, lon, D.zone);
+    var col = Math.floor((xy[0] - D.xmin) / D.res), fila = Math.floor((D.ymax - xy[1]) / D.res);
+    if (col < 0 || fila < 0 || col >= D.ncol || fila >= D.nrow) return null;
+    var v = g[fila * D.ncol + col];
+    if (v === 0) return null;
+    return { am: v % 5, af: Math.floor(v / 5) % 5, pm: Math.floor(v / 25) };
+  }
+
+  function rango(k, q) {
+    var c = window.UGS_TEMP_Q.cortes[k];
+    return c[q - 1].toFixed(1) + "–" + c[q].toFixed(1) + " °C";
+  }
+
+  function tarjeta(p, q) {
+    if (!q) return '<div class="ugs-q-card"><b>' + p.nombre + '</b><br><span class="ugs-q-sub">sin dato</span></div>';
+    return '<div class="ugs-q-card' + (p.principal ? ' principal' : '') + '"><b>' + p.nombre + '</b><br>' +
+      '<span class="ugs-q-badge" style="background:' + COLORES[q] + ';color:' + TEXTO[q] + '">Q' + q + '</span>' +
+      '<span class="ugs-q-sub">' + rango(p.k, q) + '</span></div>';
+  }
+
+  async function consultar(lat, lon, etiqueta) {
+    var out = document.getElementById("ugs-lookup-result");
+    var r = await cuartiles(lat, lon);
+    var titulo = etiqueta ? esc(etiqueta) : (lat.toFixed(5) + ", " + lon.toFixed(5));
+    var mapa = window.ugsLookupMap;
+    if (mapa) {
+      if (marcador) mapa.removeLayer(marcador);
+      marcador = L.marker([lat, lon]).addTo(mapa)
+        .bindPopup(r ? "<b>Tarde (AF): Q" + r.af + "</b><br>AM Q" + r.am + " · PM Q" + r.pm : "Fuera del área con datos")
+        .openPopup();
+      mapa.setView([lat, lon], Math.max(mapa.getZoom(), 15));
+    }
+    if (!r) {
+      out.innerHTML = "<b>" + titulo + "</b><br>Este punto queda fuera del área cubierta por los rasters de temperatura.";
+      return;
+    }
+    out.innerHTML = "<b>" + titulo + "</b>" +
+      '<div class="ugs-q-row">' + PERIODOS.map(function (p) { return tarjeta(p, r[p.k]); }).join("") + "</div>" +
+      '<div class="ugs-q-sub" style="margin-top:6px">El cuartil de tarde (AF) es el que usa el ranking. Q1 = 25% más frío, Q4 = 25% más caliente, dentro de cada período.</div>';
+  }
+  window.ugsLookupAt = consultar;
+
+  document.getElementById("ugs-lookup-form").addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    var q = document.getElementById("ugs-lookup-input").value.trim();
+    var out = document.getElementById("ugs-lookup-result");
+    var btn = this.querySelector("button");
+    if (!q) return;
+    btn.disabled = true;
+    out.textContent = "Buscando…";
+    try {
+      var url = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=cl" +
+        "&viewbox=-70.94,-33.23,-70.41,-33.69&bounded=1&accept-language=es&q=" + encodeURIComponent(q);
+      var res = await fetch(url, { headers: { "Accept": "application/json" } });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var js = await res.json();
+      if (!js.length) {
+        out.textContent = "No se encontró esa dirección dentro de Santiago. Prueba agregando la comuna (p. ej. \"…, Providencia\").";
+        return;
+      }
+      await consultar(parseFloat(js[0].lat), parseFloat(js[0].lon), js[0].display_name);
+    } catch (e) {
+      out.textContent = "Error al buscar la dirección (" + e.message + "). También puedes hacer clic en el mapa.";
+    } finally {
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
+```
+
+```{r}
+base_map() |>
+  addGeotiff(file = af_tmp, group = "Cuartil temp. tarde (AF)", opacity = 0.5,
+             colorOptions = paleta_cuartil) |>
+  addLegend(
+    position = "bottomleft",
+    colors = c("#2c7bb6", "#ffffbf", "#fdae61", "#d7191c"),
+    labels = c("Q1 (más frío)", "Q2", "Q3", "Q4 (más caliente)"),
+    title = "Cuartil temp."
+  ) |>
+  addLayersControl(
+    overlayGroups = c("Áreas verdes (MINVU)", "Cuartil temp. tarde (AF)"),
+    options = layersControlOptions(collapsed = FALSE)
+  ) |>
+  htmlwidgets::onRender("
+    function (el, x) {
+      var mapa = this;
+      window.ugsLookupMap = mapa;
+      mapa.on('click', function (e) {
+        if (window.ugsLookupAt) window.ugsLookupAt(e.latlng.lat, e.latlng.lng, null);
+      });
+    }
+  ")
+```
+
 ## 5 min Metro
 
 Buffer de 400m (~5 min caminando) alrededor de cada estación de Metro — ver
