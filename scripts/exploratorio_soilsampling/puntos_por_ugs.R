@@ -36,12 +36,8 @@ set.seed(20261111)
 dir_out <- "data/processed/exploratorio_soilsampling"
 dir.create(dir_out, showWarnings = FALSE, recursive = TRUE)
 
-# ---- Regla de n por tramo de área (m²) -------------------------------------
-TRAMOS <- data.frame(
-  area_max = c(2000, 5000, 10000, 50000, Inf),
-  n        = c(3,    4,    5,     8,     12),
-  tramo    = c("≤ 0,2 ha", "0,2–0,5 ha", "0,5–1 ha", "1–5 ha", "> 5 ha")
-)
+# ---- Regla de n por tramo de área (TRAMOS, asignar_tramo()) ----------------
+source("scripts/exploratorio_soilsampling/tramos.R")
 
 muestra <- st_read("data/processed/indicadores/muestra_carbono_rm.gpkg", quiet = TRUE) |>
   st_transform(32719) |>
@@ -49,9 +45,7 @@ muestra <- st_read("data/processed/indicadores/muestra_carbono_rm.gpkg", quiet =
   select(id, TIPO_EP, area_m2, calidad_q, temp_af_q) |>
   mutate(sitio = row_number(), .before = 1)  # `id` NO es único (47 repetidos, p. ej. plaza_sin_nombre)
 
-idx <- findInterval(muestra$area_m2, c(0, TRAMOS$area_max), left.open = TRUE)
-muestra$n_puntos <- TRAMOS$n[idx]
-muestra$tramo    <- TRAMOS$tramo[idx]
+muestra <- asignar_tramo(muestra)
 
 # ---- Puntos + estratos por sitio --------------------------------------------
 puntos_sitio <- function(poly) {

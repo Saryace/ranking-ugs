@@ -97,3 +97,87 @@ Steinfort et al. (2020) tiene un solo valor por plaza, así que solo informa
 la variabilidad *entre* sitios, no dentro de cada sitio. Para fijar CV haría
 falta un piloto (muestreo denso en 3–5 sitios) o un valor de literatura para
 céspedes y parques urbanos.
+
+### Todas las UGS de la RM
+
+La misma regla de n por tramo de área y el mismo método de ubicación
+(`ss_coverage_equal_area()`), aplicados a **todas las áreas verdes de la RM**
+(`data/processed/SHP/areas_verdes_rm.gpkg`), no solo a los 144 sitios — ver
+`puntos_todas_ugs.R`. Son decenas de miles de puntos, así que aquí se
+muestran resúmenes y un mapa estático (un mapa interactivo con todos los
+puntos haría fallar el deploy de GitHub Pages por peso); la capa completa
+queda en `data/processed/exploratorio_soilsampling/puntos_todas_ugs.gpkg`.
+
+```{r}
+resumen_todas <- read.csv(file.path(dir_ss, "resumen_todas_ugs.csv"), encoding = "UTF-8") |>
+  mutate(tramo = factor(tramo, levels = orden_tramo))
+
+tab_todas <- resumen_todas |>
+  group_by(Tramo = tramo) |>
+  summarise(
+    `n por UGS` = first(n_puntos),
+    UGS = n(),
+    Plazas = sum(TIPO_EP == "PLAZA"),
+    Parques = sum(TIPO_EP == "PARQUE"),
+    `Área total (ha)` = round(sum(area_m2) / 1e4),
+    `Puntos totales` = sum(n_logrado, na.rm = TRUE),
+    .groups = "drop"
+  )
+tab_todas |>
+  (\(d) bind_rows(d, tibble::tibble(
+    Tramo = "Total", UGS = sum(d$UGS), Plazas = sum(d$Plazas), Parques = sum(d$Parques),
+    `Área total (ha)` = sum(d$`Área total (ha)`), `Puntos totales` = sum(d$`Puntos totales`)
+  )))() |>
+  mutate(`n por UGS` = ifelse(is.na(`n por UGS`), "", `n por UGS`)) |>
+  knitr::kable(align = "lrrrrrr", format.args = list(big.mark = "."))
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 8
+#| fig-dpi: 110
+library(ggplot2)
+ugs_todas <- st_read(file.path(dir_ss, "puntos_todas_ugs.gpkg"), "ugs", quiet = TRUE) |>
+  st_point_on_surface() |>
+  # El texto de `tramo` leído del gpkg no calza con orden_tramo (≤ y – cambian de
+  # codificación), así que se reconstruye desde n_puntos (1 n por tramo).
+  mutate(tramo = factor(orden_tramo[match(n_puntos, c(3, 4, 5, 8, 12))], levels = orden_tramo)) |>
+  arrange(tramo)  # las UGS grandes se dibujan encima
+
+ggplot(ugs_todas) +
+  geom_sf(aes(colour = tramo, size = tramo), alpha = 0.8, stroke = 0) +
+  scale_colour_manual(
+    values = c("#9ecae1", "#4292c6", "#08519c", "#f16913", "#a50f15"),
+    name = "Tramo de área (n puntos)",
+    labels = paste0(orden_tramo, " (", c(3, 4, 5, 8, 12), ")"), drop = FALSE
+  ) +
+  scale_size_manual(values = c(0.25, 0.5, 1, 2, 3.5), guide = "none") +
+  labs(title = "n de puntos por UGS (regla por tramo de área)",
+       subtitle = sprintf("%s UGS de la RM — %s puntos en total",
+                          format(nrow(ugs_todas), big.mark = "."),
+                          format(sum(resumen_todas$n_logrado, na.rm = TRUE), big.mark = "."))) +
+  theme_minimal(base_size = 11) +
+  guides(colour = guide_legend(override.aes = list(size = 3))) +
+  theme(axis.title = element_blank(), legend.position = "right")
+```
+
+**Cuánto cambia el total según cómo se fije n.** La regla por tramo de área
+frente a un n fijo por UGS derivado del CV de COS (n = (t · CV / E)²,
+aplicado a cada una de las UGS de la RM):
+
+```{r}
+n_ugs <- nrow(resumen_todas)
+escenarios <- expand.grid(cv = c(0.20, 0.30, 0.40), err = c(0.10, 0.20)) |>
+  mutate(n = ceiling((1.96 * cv / err)^2)) |>
+  transmute(
+    Escenario = paste0("CV ", cv * 100, " %, E ± ", err * 100, " %"),
+    `n por UGS` = as.character(n),
+    `Puntos totales` = n * n_ugs
+  )
+bind_rows(
+  tibble::tibble(Escenario = "Regla por tramo de área (este tab)", `n por UGS` = "3–12",
+                 `Puntos totales` = sum(resumen_todas$n_logrado, na.rm = TRUE)),
+  escenarios
+) |>
+  knitr::kable(align = "lrr", format.args = list(big.mark = "."))
+```
