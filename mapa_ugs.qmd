@@ -711,4 +711,7 @@ datatable(
 )
 ```
 
+<!-- Tab exploratorio: borrar esta línea + scripts/exploratorio_soilsampling/ para quitarlo -->
+{{< include scripts/exploratorio_soilsampling/tab_soilsampling.qmd >}}
+
 :::

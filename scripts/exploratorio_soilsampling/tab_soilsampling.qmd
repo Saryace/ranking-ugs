@@ -1,0 +1,99 @@
+## Puntos por UGS (exploratorio)
+
+> **Exploratorio.** Prueba del paquete
+> [soilsampling](https://github.com/ccarbajal16/soilsampling) para ubicar
+> puntos de suelo *dentro* de cada uno de los 144 sitios de la muestra.
+> Todo vive en `scripts/exploratorio_soilsampling/` y se puede borrar junto con
+> la línea `include` en `mapa_ugs.qmd`.
+
+**Cómo se eligió n.** No se usa `ss_kl_size()` (n óptimo por divergencia
+KL): la mediana de los sitios es ~2.900 m², es decir 1–5 píxeles de 30 m de
+NDVI/Dynamic World/temperatura, así que dentro de una plaza no hay
+distribución de covariables que cubrir. En su lugar se usa una **regla por
+tramo de área** (supuesto, editable en `TRAMOS` del script). Los puntos se
+ubican con `ss_coverage_equal_area()`: k-means con estratos de **igual área**
+y un punto en el centroide de cada estrato — sirve tanto para muestras
+individuales como para **un compuesto por sitio** (una submuestra por
+estrato, todas con el mismo peso).
+
+```{r}
+dir_ss <- "data/processed/exploratorio_soilsampling"
+resumen_ss <- read.csv(file.path(dir_ss, "resumen_por_sitio.csv"), encoding = "UTF-8")
+
+orden_tramo <- c("≤ 0,2 ha", "0,2–0,5 ha", "0,5–1 ha", "1–5 ha", "> 5 ha")
+resumen_ss |>
+  mutate(tramo = factor(tramo, levels = orden_tramo)) |>
+  group_by(Tramo = tramo) |>
+  summarise(
+    `n por sitio` = first(n_puntos),
+    Sitios = n(),
+    Plazas = sum(TIPO_EP == "PLAZA"),
+    Parques = sum(TIPO_EP == "PARQUE"),
+    `Puntos totales` = sum(n_logrado, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  (\(d) bind_rows(d, tibble::tibble(
+    Tramo = "Total", `n por sitio` = NA, Sitios = sum(d$Sitios), Plazas = sum(d$Plazas),
+    Parques = sum(d$Parques), `Puntos totales` = sum(d$`Puntos totales`)
+  )))() |>
+  mutate(`n por sitio` = ifelse(is.na(`n por sitio`), "", `n por sitio`)) |>
+  knitr::kable(align = "lrrrrr", format.args = list(big.mark = "."))
+```
+
+**Mapa:** polígono de cada sitio, sus estratos de igual área (bordes
+punteados) y el punto de muestreo de cada estrato. Haz zoom a un sitio para
+verlo.
+
+```{r}
+# Sin base_map() (peso del HTML, ver tab "Consultar dirección"); solo los 144 sitios.
+sitios_ss <- st_read(file.path(dir_ss, "puntos_soilsampling.gpkg"), "sitios", quiet = TRUE) |>
+  st_transform(4326)
+estratos_ss <- st_read(file.path(dir_ss, "puntos_soilsampling.gpkg"), "estratos", quiet = TRUE) |>
+  st_simplify(dTolerance = 0.5) |>
+  st_transform(4326)
+puntos_ss <- st_read(file.path(dir_ss, "puntos_soilsampling.gpkg"), "puntos", quiet = TRUE) |>
+  st_transform(4326)
+
+colores_tipo_ss <- c(PARQUE = "#d95f02", PLAZA = "#3182bd")
+pal_tipo_ss <- colorFactor(unname(colores_tipo_ss), domain = names(colores_tipo_ss))
+
+leaflet(options = leafletOptions(minZoom = 10)) |>
+  add_carto_basemap() |>
+  addPolygons(
+    data = sitios_ss, group = "Sitios", color = ~pal_tipo_ss(TIPO_EP),
+    weight = 2, fillOpacity = 0.15,
+    label = ~paste0(TIPO_EP, " ", id, " — ", format(round(area_m2), big.mark = "."),
+                    " m², n = ", n_puntos)
+  ) |>
+  addPolylines(
+    data = st_cast(estratos_ss, "MULTILINESTRING"), group = "Estratos",
+    color = "#555", weight = 1, dashArray = "3,3", opacity = 0.8
+  ) |>
+  addCircleMarkers(
+    data = puntos_ss, group = "Puntos", radius = 3, color = "#111",
+    weight = 1, fillColor = "#ffd92f", fillOpacity = 1,
+    label = ~paste0(id, " (sitio ", sitio, ") — punto ", sample_id)
+  ) |>
+  addLegend(position = "bottomright", pal = pal_tipo_ss, values = names(colores_tipo_ss),
+            title = "Tipo") |>
+  addLayersControl(overlayGroups = c("Sitios", "Estratos", "Puntos"),
+                   options = layersControlOptions(collapsed = FALSE))
+```
+
+**Qué debería fijar n en realidad:** la variabilidad del carbono orgánico
+del suelo (COS) *dentro* del sitio. Con n = (t · CV / E)², donde CV es el
+coeficiente de variación dentro del sitio y E el error relativo aceptado
+(95 %, t ≈ 2), el n necesario sería:
+
+```{r}
+cv  <- c(0.20, 0.30, 0.40)
+err <- c(0.10, 0.15, 0.20)
+tab_n <- outer(cv, err, function(c, e) ceiling((1.96 * c / e)^2))
+dimnames(tab_n) <- list(paste0("CV ", cv * 100, " %"), paste0("E ± ", err * 100, " %"))
+knitr::kable(tab_n, align = "rrr")
+```
+
+Steinfort et al. (2020) tiene un solo valor por plaza, así que solo informa
+la variabilidad *entre* sitios, no dentro de cada sitio. Para fijar CV haría
+falta un piloto (muestreo denso en 3–5 sitios) o un valor de literatura para
+céspedes y parques urbanos.
